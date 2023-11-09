@@ -564,6 +564,12 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 		"penalize_nl":       llm.PenalizeNewline,
 		"seed":              llm.Seed,
 		"stop":              llm.Stop,
+		"image_data":        llm.ImageData,
+	}
+	if len(llm.ImageData) > 0 {
+		log.Printf("llama.go: %+v ----  (%+v)\n", request["prompt"], len(llm.ImageData[0].Data))
+	} else {
+		log.Printf("llama.go: %+v ----  (No Images)\n", request["prompt"])
 	}
 
 	if format == "json" {

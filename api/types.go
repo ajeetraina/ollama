@@ -65,6 +65,7 @@ type Options struct {
 	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
 	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
+	ImageData        []ImageData `json:"image_data,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
@@ -208,6 +209,12 @@ func (r *GenerateResponse) Summary() {
 	}
 }
 
+
+type ImageData struct {
+	Data string `json:"data"`
+	ID   string `json:"id"`
+}
+
 var ErrInvalidOpts = fmt.Errorf("invalid options")
 
 func (opts *Options) FromMap(m map[string]interface{}) error {
@@ -263,21 +270,45 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 					}
 					field.SetString(val)
 				case reflect.Slice:
-					// JSON unmarshals to []interface{}, not []string
-					val, ok := val.([]interface{})
-					if !ok {
-						return fmt.Errorf("option %q must be of type array", key)
-					}
-					// convert []interface{} to []string
-					slice := make([]string, len(val))
-					for i, item := range val {
-						str, ok := item.(string)
+					if field.Type().Elem().Name() == "ImageData" {
+						val, ok := val.([]interface{})
 						if !ok {
-							return fmt.Errorf("option %q must be of an array of strings", key)
+							return fmt.Errorf("option %q must be of type array", key)
 						}
-						slice[i] = str
+						// Convert []interface{} to []ImageData
+						slice := make([]ImageData, len(val))
+						for i, item := range val {
+							data, ok := item.(map[string]interface{})
+							if !ok {
+								return fmt.Errorf("option %q must be of an array of ImageData", key)
+							}
+							imgData := ImageData{}
+							if dataVal, ok := data["Data"].(string); ok {
+								imgData.Data = dataVal
+							}
+							if id, ok := data["ID"].(string); ok {
+								imgData.ID = id
+							}
+							slice[i] = imgData
+						}
+						field.Set(reflect.ValueOf(slice))
+					} else {
+						// JSON unmarshals to []interface{}, not []string
+						val, ok := val.([]interface{})
+						if !ok {
+							return fmt.Errorf("option %q must be of type array", key)
+						}
+						// convert []interface{} to []string
+						slice := make([]string, len(val))
+						for i, item := range val {
+							str, ok := item.(string)
+							if !ok {
+								return fmt.Errorf("option %q must be of an array of strings", key)
+							}
+							slice[i] = str
+						}
+						field.Set(reflect.ValueOf(slice))
 					}
-					field.Set(reflect.ValueOf(slice))
 				default:
 					return fmt.Errorf("unknown type loading config params: %v", field.Kind())
 				}
@@ -312,6 +343,7 @@ func DefaultOptions() Options {
 		MirostatEta:      0.1,
 		PenalizeNewline:  true,
 		Seed:             -1,
+		ImageData:        nil,
 
 		Runner: Runner{
 			// options set when the model is loaded
