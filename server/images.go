@@ -40,6 +40,7 @@ type Model struct {
 	ShortName     string
 	ModelPath     string
 	OriginalModel string
+	MMProjPath    string
 	AdapterPaths  []string
 	Template      string
 	System        string
@@ -222,6 +223,8 @@ func GetModel(name string) (*Model, error) {
 				return nil, err
 			}
 			model.License = append(model.License, string(bts))
+		case "application/vnd.ollama.image.mmproj":
+			model.MMProjPath = filename
 		}
 	}
 
@@ -403,11 +406,31 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 				layer.MediaType = mediatype
 				layers = append(layers, layer)
 			}
-		case "template", "system":
-			fn(api.ProgressResponse{Status: fmt.Sprintf("creating %s layer", c.Name)})
+		case "mmproj":
+			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
+			file, err := os.Open(realpath(c.Args))
+			if err != nil {
+				return fmt.Errorf("failed to open file: %v", err)
+			}
+			defer file.Close()
 
-			// remove duplicate layers
-			layers = removeLayerFromLayers(layers, mediatype)
+			// reset the file
+			file.Seek(0, io.SeekStart)
+
+			layer, err := CreateLayer(file)
+			if err != nil {
+				return err
+			}
+
+			if layer.Size > 0 {
+				layer.MediaType = mediatype
+				layers = append(layers, layer)
+			}
+		case "template", "system":
+			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
+			// remove the layer if one exists
+			mediaType := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
+			layers = removeLayerFromLayers(layers, mediaType)
 
 			layer, err := CreateLayer(strings.NewReader(c.Args))
 			if err != nil {
@@ -890,6 +913,10 @@ TEMPLATE """{{ .Template }}"""
 
 {{- if .System }}
 SYSTEM """{{ .System }}"""
+{{- end }}
+
+{{- if .MMProjPath }}
+MMPROJ {{ .MMProjPath }}
 {{- end }}
 
 {{- range $adapter := .AdapterPaths }}
