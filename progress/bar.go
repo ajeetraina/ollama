@@ -2,7 +2,6 @@ package progress
 
 import (
 	"fmt"
-	"math"
 	"os"
 	"strings"
 	"time"
@@ -10,12 +9,6 @@ import (
 	"github.com/jmorganca/ollama/format"
 	"golang.org/x/term"
 )
-
-type Stats struct {
-	rate      int64
-	value     int64
-	remaining time.Duration
-}
 
 type Bar struct {
 	message      string
@@ -26,9 +19,15 @@ type Bar struct {
 	currentValue int64
 
 	started time.Time
+	stopped time.Time
 
-	stats   Stats
-	statted time.Time
+	maxBuckets int
+	buckets    []bucket
+}
+
+type bucket struct {
+	updated time.Time
+	value   int64
 }
 
 func NewBar(message string, maxValue, initialValue int64) *Bar {
@@ -39,20 +38,20 @@ func NewBar(message string, maxValue, initialValue int64) *Bar {
 		initialValue: initialValue,
 		currentValue: initialValue,
 		started:      time.Now(),
+		maxBuckets:   10,
 	}
 }
 
 // formatDuration limits the rendering of a time.Duration to 2 units
 func formatDuration(d time.Duration) string {
-	if d >= 100*time.Hour {
+	switch {
+	case d >= 100*time.Hour:
 		return "99h+"
+	case d >= time.Hour:
+		return d.Round(time.Minute).String()
+	default:
+		return d.Round(time.Second).String()
 	}
-
-	if d >= time.Hour {
-		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
-	}
-
-	return d.Round(time.Second).String()
 }
 
 func (b *Bar) String() string {
@@ -61,58 +60,84 @@ func (b *Bar) String() string {
 		termWidth = 80
 	}
 
-	var pre, mid, suf strings.Builder
-
-	if b.message != "" {
+	var pre strings.Builder
+	if len(b.message) > 0 {
 		message := strings.TrimSpace(b.message)
 		if b.messageWidth > 0 && len(message) > b.messageWidth {
 			message = message[:b.messageWidth]
 		}
 
 		fmt.Fprintf(&pre, "%s", message)
-		if b.messageWidth-pre.Len() >= 0 {
-			pre.WriteString(strings.Repeat(" ", b.messageWidth-pre.Len()))
+		if padding := b.messageWidth - pre.Len(); padding > 0 {
+			pre.WriteString(strings.Repeat(" ", padding))
 		}
 
 		pre.WriteString(" ")
 	}
 
-	fmt.Fprintf(&pre, "%3.0f%% ", math.Floor(b.percent()))
+	fmt.Fprintf(&pre, "%3.0f%%", b.percent())
 
-	fmt.Fprintf(&suf, "(%s/%s", format.HumanBytes(b.currentValue), format.HumanBytes(b.maxValue))
+	var suf strings.Builder
+	// max 13 characters: "999 MB/999 MB"
+	if b.stopped.IsZero() {
+		curValue := format.HumanBytes(b.currentValue)
+		suf.WriteString(strings.Repeat(" ", 6-len(curValue)))
+		suf.WriteString(curValue)
+		suf.WriteString("/")
 
-	stats := b.Stats()
-	rate := stats.rate
-	if stats.value > b.initialValue && stats.value < b.maxValue {
-		fmt.Fprintf(&suf, ", %s/s", format.HumanBytes(int64(rate)))
+		maxValue := format.HumanBytes(b.maxValue)
+		suf.WriteString(strings.Repeat(" ", 6-len(maxValue)))
+		suf.WriteString(maxValue)
+	} else {
+		maxValue := format.HumanBytes(b.maxValue)
+		suf.WriteString(strings.Repeat(" ", 6-len(maxValue)))
+		suf.WriteString(maxValue)
+		suf.WriteString(strings.Repeat(" ", 7))
 	}
 
-	fmt.Fprintf(&suf, ")")
-
-	var timing string
-	if stats.value > b.initialValue && stats.value < b.maxValue {
-		timing = fmt.Sprintf("[%s:%s]", formatDuration(time.Since(b.started)), formatDuration(stats.remaining))
+	rate := b.rate()
+	// max 10 characters: ", 999 MB/s"
+	if b.stopped.IsZero() {
+		suf.WriteString(", ")
+		humanRate := format.HumanBytes(int64(rate))
+		suf.WriteString(strings.Repeat(" ", 6-len(humanRate)))
+		suf.WriteString(humanRate)
+		suf.WriteString("/s")
+	} else {
+		suf.WriteString(strings.Repeat(" ", 10))
 	}
 
-	// 44 is the maximum width for the stats on the right of the progress bar
-	pad := 44 - suf.Len() - len(timing)
-	if pad > 0 {
-		suf.WriteString(strings.Repeat(" ", pad))
-	}
-	suf.WriteString(timing)
+	// max 8 characters: ", 59m59s"
+	if b.stopped.IsZero() {
+		suf.WriteString(", ")
+		var remaining time.Duration
+		if rate > 0 {
+			remaining = time.Duration(int64(float64(b.maxValue-b.currentValue)/rate)) * time.Second
+		}
 
+		humanRemaining := formatDuration(remaining)
+		suf.WriteString(strings.Repeat(" ", 6-len(humanRemaining)))
+		suf.WriteString(humanRemaining)
+	} else {
+		suf.WriteString(strings.Repeat(" ", 8))
+	}
+
+	var mid strings.Builder
 	// add 3 extra spaces: 2 boundary characters and 1 space at the end
 	f := termWidth - pre.Len() - suf.Len() - 3
 	n := int(float64(f) * b.percent() / 100)
 
-	if f > 0 {
-		mid.WriteString("▕")
+	mid.WriteString("▕")
+
+	if n > 0 {
 		mid.WriteString(strings.Repeat("█", n))
-		if f-n > 0 {
-			mid.WriteString(strings.Repeat(" ", f-n))
-		}
-		mid.WriteString("▏")
 	}
+
+	if f-n > 0 {
+		mid.WriteString(strings.Repeat(" ", f-n))
+	}
+
+	mid.WriteString("▏")
 
 	return pre.String() + mid.String() + suf.String()
 }
@@ -123,6 +148,21 @@ func (b *Bar) Set(value int64) {
 	}
 
 	b.currentValue = value
+	if b.currentValue >= b.maxValue {
+		b.stopped = time.Now()
+	}
+
+	// throttle bucket updates to 1 per second
+	if len(b.buckets) == 0 || time.Since(b.buckets[len(b.buckets)-1].updated) > time.Second {
+		b.buckets = append(b.buckets, bucket{
+			updated: time.Now(),
+			value:   value,
+		})
+
+		if len(b.buckets) > b.maxBuckets {
+			b.buckets = b.buckets[1:]
+		}
+	}
 }
 
 func (b *Bar) percent() float64 {
@@ -133,41 +173,19 @@ func (b *Bar) percent() float64 {
 	return 0
 }
 
-func (b *Bar) Stats() Stats {
-	if time.Since(b.statted) < time.Second {
-		return b.stats
+func (b *Bar) rate() float64 {
+	if !b.stopped.IsZero() {
+		elapsed := b.stopped.Sub(b.started).Round(time.Second)
+		return (float64(b.currentValue) - float64(b.initialValue)) / elapsed.Seconds()
 	}
 
-	switch {
-	case b.statted.IsZero():
-		b.stats = Stats{
-			value:     b.initialValue,
-			rate:      0,
-			remaining: 0,
-		}
-	case b.currentValue >= b.maxValue:
-		b.stats = Stats{
-			value:     b.maxValue,
-			rate:      0,
-			remaining: 0,
-		}
+	switch len(b.buckets) {
+	case 0:
+		return 0
+	case 1:
+		return float64(b.buckets[0].value-b.initialValue) / b.buckets[0].updated.Sub(b.started).Seconds()
 	default:
-		rate := b.currentValue - b.stats.value
-		var remaining time.Duration
-		if rate > 0 {
-			remaining = time.Second * time.Duration((float64(b.maxValue-b.currentValue))/(float64(rate)))
-		} else {
-			remaining = time.Duration(math.MaxInt64)
-		}
-
-		b.stats = Stats{
-			value:     b.currentValue,
-			rate:      rate,
-			remaining: remaining,
-		}
+		first, last := b.buckets[0], b.buckets[len(b.buckets)-1]
+		return (float64(last.value) - float64(first.value)) / last.updated.Sub(first.updated).Seconds()
 	}
-
-	b.statted = time.Now()
-
-	return b.stats
 }
