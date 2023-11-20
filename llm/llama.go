@@ -220,8 +220,14 @@ type Running struct {
 	*StatusWriter            // captures error messages from the llama runner process
 }
 
+type ImageData struct {
+	Data string `json:"data"`
+	ID   int    `json:"id"`
+}
+
 type llama struct {
 	api.Options
+	ImageData []ImageData
 	Running
 }
 
@@ -548,8 +554,12 @@ func (llm *llama) Predict(ctx context.Context, prevContext []int, prompt string,
 
 	imageData := llm.ImageData
 	if len(images) > 0 {
-		imageData = images
+		for cnt, i := range images {
+			data := fmt.Sprintf("%s", i)
+			imageData = append(imageData, ImageData{Data: data, ID: cnt})
+		}
 	}
+	log.Printf("loaded %d images", len(images))
 	request := map[string]any{
 		"prompt":            nextContext.String(),
 		"stream":            true,

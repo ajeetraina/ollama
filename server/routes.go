@@ -183,7 +183,7 @@ func GenerateHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
+	multiModal := model.MMProjPath != ""
 	workDir := c.GetString("workDir")
 
 	// TODO: set this duration from the request if specified
@@ -208,35 +208,12 @@ func GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	rawImages, _ := req.Options["image_data"].([]interface{})
-
-	images := make([]api.ImageData, len(rawImages))
-	for i, img := range rawImages {
-		imgMap, ok := img.(map[string]interface{})
-		if !ok {
-			return
-		}
-		data, ok := imgMap["data"].(string)
-		if !ok {
-			log.Println("image data is not a string")
-			return
-		}
-		floatId, ok := imgMap["id"].(float64)
-		if !ok {
-			log.Printf("image id is not defined")
-			return
-		}
-		id := int(floatId)
-
-		images[i] = api.ImageData{Data: data, ID: id}
-	}
-
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
 		// an empty request loads the model
 		if req.Prompt == "" && req.Template == "" && req.System == "" {
-			ch <- api.GenerateResponse{CreatedAt: time.Now().UTC(), Model: req.Model, Done: true}
+			ch <- api.GenerateResponse{CreatedAt: time.Now().UTC(), Model: req.Model, MultiModal: multiModal, Done: true}
 			return
 		}
 
@@ -245,6 +222,7 @@ func GenerateHandler(c *gin.Context) {
 			loaded.expireTimer.Reset(sessionDuration)
 
 			r.Model = req.Model
+			r.MultiModal = multiModal
 			r.CreatedAt = time.Now().UTC()
 			if r.Done {
 				r.TotalDuration = time.Since(checkpointStart)
@@ -259,7 +237,7 @@ func GenerateHandler(c *gin.Context) {
 			ch <- r
 		}
 
-		if err := loaded.runner.Predict(c.Request.Context(), req.Context, prompt, req.Format, images, fn); err != nil {
+		if err := loaded.runner.Predict(c.Request.Context(), req.Context, prompt, req.Format, req.ImageData, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()

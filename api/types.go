@@ -30,15 +30,18 @@ func (e StatusError) Error() string {
 	}
 }
 
+type ImageData string
+
 type GenerateRequest struct {
-	Model    string `json:"model"`
-	Prompt   string `json:"prompt"`
-	System   string `json:"system"`
-	Template string `json:"template"`
-	Context  []int  `json:"context,omitempty"`
-	Stream   *bool  `json:"stream,omitempty"`
-	Raw      bool   `json:"raw,omitempty"`
-	Format   string `json:"format"`
+	Model     string      `json:"model"`
+	Prompt    string      `json:"prompt"`
+	System    string      `json:"system"`
+	Template  string      `json:"template"`
+	Context   []int       `json:"context,omitempty"`
+	Stream    *bool       `json:"stream,omitempty"`
+	Raw       bool        `json:"raw,omitempty"`
+	Format    string      `json:"format"`
+	ImageData []ImageData `json:"image_data,omitempty"`
 
 	Options map[string]interface{} `json:"options"`
 }
@@ -65,7 +68,6 @@ type Options struct {
 	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
 	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
-	ImageData        []ImageData `json:"image_data,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
@@ -166,9 +168,10 @@ type TokenResponse struct {
 }
 
 type GenerateResponse struct {
-	Model     string    `json:"model"`
-	CreatedAt time.Time `json:"created_at"`
-	Response  string    `json:"response"`
+	Model      string    `json:"model"`
+	MultiModal bool      `json:"multi_modal"`
+	CreatedAt  time.Time `json:"created_at"`
+	Response   string    `json:"response"`
 
 	Done    bool  `json:"done"`
 	Context []int `json:"context,omitempty"`
@@ -207,12 +210,6 @@ func (r *GenerateResponse) Summary() {
 		fmt.Fprintf(os.Stderr, "eval duration:        %s\n", r.EvalDuration)
 		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(r.EvalCount)/r.EvalDuration.Seconds())
 	}
-}
-
-
-type ImageData struct {
-	Data string `json:"data"`
-	ID   int    `json:"id"`
 }
 
 var ErrInvalidOpts = fmt.Errorf("invalid options")
@@ -270,45 +267,21 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 					}
 					field.SetString(val)
 				case reflect.Slice:
-					if field.Type().Elem().Name() == "ImageData" {
-						val, ok := val.([]interface{})
-						if !ok {
-							return fmt.Errorf("option %q must be of type array", key)
-						}
-						// Convert []interface{} to []ImageData
-						slice := make([]ImageData, len(val))
-						for i, item := range val {
-							data, ok := item.(map[string]interface{})
-							if !ok {
-								return fmt.Errorf("option %q must be of an array of ImageData", key)
-							}
-							imgData := ImageData{}
-							if dataVal, ok := data["Data"].(string); ok {
-								imgData.Data = dataVal
-							}
-							if id, ok := data["ID"].(int); ok {
-								imgData.ID = id
-							}
-							slice[i] = imgData
-						}
-						field.Set(reflect.ValueOf(slice))
-					} else {
-						// JSON unmarshals to []interface{}, not []string
-						val, ok := val.([]interface{})
-						if !ok {
-							return fmt.Errorf("option %q must be of type array", key)
-						}
-						// convert []interface{} to []string
-						slice := make([]string, len(val))
-						for i, item := range val {
-							str, ok := item.(string)
-							if !ok {
-								return fmt.Errorf("option %q must be of an array of strings", key)
-							}
-							slice[i] = str
-						}
-						field.Set(reflect.ValueOf(slice))
+					// JSON unmarshals to []interface{}, not []string
+					val, ok := val.([]interface{})
+					if !ok {
+						return fmt.Errorf("option %q must be of type array", key)
 					}
+					// convert []interface{} to []string
+					slice := make([]string, len(val))
+					for i, item := range val {
+						str, ok := item.(string)
+						if !ok {
+							return fmt.Errorf("option %q must be of an array of strings", key)
+						}
+						slice[i] = str
+					}
+					field.Set(reflect.ValueOf(slice))
 				default:
 					return fmt.Errorf("unknown type loading config params: %v", field.Kind())
 				}
@@ -343,7 +316,6 @@ func DefaultOptions() Options {
 		MirostatEta:      0.1,
 		PenalizeNewline:  true,
 		Seed:             -1,
-		ImageData:        nil,
 
 		Runner: Runner{
 			// options set when the model is loaded
