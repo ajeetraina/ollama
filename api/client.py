@@ -116,7 +116,7 @@ def create(model_name: str, filename: str, callback=None):
                 create_blob(digest, path)
 
                 # Replace path with digest in the line
-                line = f"{command} @{digest}\n"
+                line = f"{command} {digest}\n"
 
             processed_lines.append(line)
 
