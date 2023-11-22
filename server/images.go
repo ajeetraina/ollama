@@ -408,7 +408,7 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			}
 		case "mmproj":
 			fn(api.ProgressResponse{Status: fmt.Sprintf("creating model %s layer", c.Name)})
-			file, err := os.Open(realpath(c.Args))
+			file, err := os.Open(realpath(modelFileDir, c.Args))
 			if err != nil {
 				return fmt.Errorf("failed to open file: %v", err)
 			}
