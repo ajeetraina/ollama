@@ -70,9 +70,9 @@ More examples are available in the [examples directory](../examples).
 There are two ways to view `Modelfile`s underlying the models in [ollama.ai/library][1]:
 
 - Option 1: view a details page from a model's tags page:
-   1. Go to a particular model's tags (e.g. https://ollama.ai/library/llama2/tags)
-   2. Click on a tag (e.g. https://ollama.ai/library/llama2:13b)
-   3. Scroll down to "Layers"
+  1.  Go to a particular model's tags (e.g. https://ollama.ai/library/llama2/tags)
+  2.  Click on a tag (e.g. https://ollama.ai/library/llama2:13b)
+  3.  Scroll down to "Layers"
       - Note: if the [`FROM` instruction](#from-required) is not present,
         it means the model was created from a local file
 - Option 2: use `ollama show` to print the `Modelfile` like so:
